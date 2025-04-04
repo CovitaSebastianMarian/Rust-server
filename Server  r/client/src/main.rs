@@ -1,36 +1,49 @@
 use std::io::{self, Read, Write};
 use std::net::TcpStream;
+use std::thread;
 
-fn execute_command(mut stream: TcpStream) {
-    loop {
-        let mut buffer = [0; 512];
-        let len = stream.read(&mut buffer).unwrap();
-        let message = String::from_utf8_lossy(&buffer[..len]);
-        let message = message.as_ref();
-        if message.starts_with("MSG") {
-            print!("{}", &message[3..]);
-            io::stdout().flush().unwrap();
-            println!();
-        } else if message.trim() == "END" {
-            break;
-        } else if message.trim() == "RAW" {
-            let mut input = String::new();
-            io::stdin().read_line(&mut input).unwrap();
-            stream.write_all(input.as_bytes()).unwrap();
+struct Client {
+    stream: TcpStream,
+}
+impl Client {
+    fn new(addr: &str) -> Client {
+        let stream = TcpStream::connect(addr).expect("Eroare la conectarea la server!");
+        Client { stream }
+    }
+    fn listen(&mut self) {
+        let mut stream_clone = self
+            .stream
+            .try_clone()
+            .expect("Eroare la clonarea stream-ului!");
+
+        thread::spawn(move || {
+            let mut buffer = [0; 512];
+            loop {
+                match stream_clone.read(&mut buffer) {
+                    Ok(n) if n > 0 => {
+                        println!(">> {}", String::from_utf8_lossy(&buffer[..n]));
+                    }
+                    _ => {
+                        println!("Serverul s-a închis!");
+                        break;
+                    }
+                }
+            }
+        });
+    }
+    fn send(&mut self) {
+        let mut input = String::new();
+        while io::stdin().read_line(&mut input).is_ok() {
+            self.stream
+                .write_all(input.as_bytes())
+                .expect("Eroare la trimiterea mesajului!");
+            input.clear();
         }
     }
 }
 
 fn main() {
-    let mut client =
-        TcpStream::connect("127.0.0.1:8080").expect("Eroare la conectarea cu serverul!");
-
-    loop {
-        let mut input = String::new();
-        io::stdin().read_line(&mut input).unwrap();
-        if input.trim() != "" {
-            client.write_all(input.trim().as_bytes()).unwrap();
-            execute_command(client.try_clone().unwrap());
-        }
-    }
+    let mut client = Client::new("127.0.0.1:8000");
+    client.listen();
+    client.send();
 }
