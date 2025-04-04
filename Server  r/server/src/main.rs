@@ -1,79 +1,84 @@
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 
-
-
-fn command_msg(input: &str,mut stream: &TcpStream) {
-    stream.write_all(format!("MSG{}", input).as_bytes()).unwrap();
+struct Client {
+    stream: TcpStream,
+    id: usize,
 }
-fn command_raw(mut stream: &TcpStream) -> String {
-    stream.write_all("RAW".as_bytes()).unwrap();
-    let mut buffer = [0; 512];
-    let len = stream.read(&mut buffer).unwrap();
-    let ret = String::from_utf8_lossy(&buffer[..len]);
-    ret.as_ref().to_string()
-}
-fn command_end(mut stream: &TcpStream) {
-    stream.write_all("END".as_bytes()).unwrap();
-}
+impl Client {
+    fn new(stream: TcpStream, id: usize) -> Client {
+        Client { stream, id }
+    }
+    fn run(&mut self, sender: Sender<String>) {
+        let mut buffer = [0; 512];
 
-fn execute_command(msg: &str, stream: TcpStream) {
-    let command = msg.split_whitespace().collect::<Vec<&str>>().join(" ");
-    let command = command.as_str();
-    match command {
-        "sebux da-mi acces" => {
-            command_msg("Enter password:", &stream);
-            let password = command_raw(&stream);
-            println!("{}", password);
-            if password.trim() == "sebux" {
-                command_msg("Acces permis!", &stream);
-                command_msg(r#"Salutare ma bucur ca ai intrat aici!"#, &stream);
+        loop {
+            match self.stream.read(&mut buffer) {
+                Ok(n) if n > 0 => {
+                    let msg = format!("Client {}: {}", self.id, String::from_utf8_lossy(&buffer[..n]));
+                    sender.send(msg).unwrap();
+                }
+                _ => {
+                    println!("Client {} s-a deconectat.", self.id);
+                    break;
+                }
             }
-            else  {
-                command_msg("Acces denied!", &stream);
-            }
-            command_end(&stream);
-        }
-        _ => {
-            println!("Command not found!");
-            command_msg("Command not found!", &stream);
-            command_end(&stream);
         }
     }
 }
 
-fn handle_client(mut stream: TcpStream) {
-    loop {
-        let mut buffer = [0; 512];
-        match stream.read(&mut buffer) {
-            Ok(size) => {
-                let message = String::from_utf8_lossy(&buffer[..size]);
-                println!("Received: {}", message);
-                execute_command(message.clone().as_ref(), stream.try_clone().unwrap());
+struct Server {
+    listener: TcpListener,
+    clients: Arc<Mutex<Vec<TcpStream>>>,
+}
+impl Server {
+    fn new(addr: &str) -> Server {
+        Server {
+            listener: TcpListener::bind(addr).expect("Eroare la pornirea serverului!"),
+            clients: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+    fn run(&self) {
+        let clients_clone = Arc::clone(&self.clients);
+        let (tx, rx): (Sender<String>, Receiver<String>) = mpsc::channel();
+        thread::spawn(move || {
+            for msg in rx.iter() {
+                println!("[{}]", msg.trim());
+                let clients_guard = clients_clone.lock().unwrap();
+                for mut client in clients_guard.iter() {
+                    let _ = client.write_all(msg.trim().as_bytes());
+                }
             }
-            Err(e) => {
-                eprintln!("{}", e);
-                break;
+        });
+
+        let mut client_id = 0;
+
+        for stream in self.listener.incoming() {
+            match stream {
+                Ok(stream) => {
+                    let stream_clone = stream.try_clone().expect("Eroare la clonare stream!");
+                    self.clients.lock().unwrap().push(stream_clone);
+                    let sender_clone = tx.clone();
+
+                    thread::spawn(move || {
+                        let mut client = Client::new(stream, client_id);
+                        client.run(sender_clone);
+                    });
+                    client_id += 1;
+                }
+                Err(e) => {
+                    println!("[EROARE]: {}", e);
+                }
             }
         }
     }
 }
 
 fn main() {
-    let listener = TcpListener::bind("127.0.0.1:8080").expect("Failed to bind to port 8080");
-
-    println!("Server running on port 8080");
-
-    for stream in listener.incoming() {
-        match stream {
-            Ok(stream) => {
-                thread::spawn(move || handle_client(stream));
-            }
-            Err(e) => {
-                eprintln!("Connection failed: {}", e);
-            }
-        }
-    }
+    let server = Server::new("127.0.0.1:8000");
+    server.run();
 }
