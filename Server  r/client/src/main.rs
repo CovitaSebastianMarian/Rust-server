@@ -1,6 +1,6 @@
 use std::io::{self, Read, Write};
 use std::net::TcpStream;
-use std::thread;
+use std::thread; 
 
 struct Client {
     stream: TcpStream,
