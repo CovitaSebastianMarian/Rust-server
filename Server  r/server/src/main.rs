@@ -1,4 +1,4 @@
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
@@ -75,6 +75,21 @@ impl Server {
                 }
             }
         }
+
+
+
+        thread::spawn(move || {
+            let mut input = String::new();
+
+            while io::stdin().read_line(&mut input).is_ok() {
+                
+            }
+
+
+        });
+
+
+
     }
 }
 
